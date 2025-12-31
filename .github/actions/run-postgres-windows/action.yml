@@ -1,0 +1,66 @@
+---
+name: run-postgres-windows
+description: Run PostgreSQL on Windows
+inputs:
+  version:
+    description: Version to run
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: install and setup postgres
+      shell: pwsh
+      run: |
+        choco install --yes --no-progress --use-download-cache postgresql${{ inputs.version }} --params '/Password:notused' --ia '--enable-components server,commandlinetools'
+
+        $Env:Path = $Env:Path + ";" + (Get-ItemPropertyValue -Path ("Registry::" + (Get-ChildItem -Path 'HKLM:\SOFTWARE\PostgreSQL\Installations\postgresql-*-${{ inputs.version }}')[0].Name) -Name 'Base Directory') + "\bin"
+        $PGDATA = Get-ItemPropertyValue -Path ("Registry::" + (Get-ChildItem -Path 'HKLM:\SOFTWARE\PostgreSQL\Installations\postgresql-*-${{ inputs.version }}')[0].Name) -Name 'Data Directory'
+
+        function WaitIsReady {
+          while ($true) {
+            pg_isready -q
+            if ($LASTEXITCODE -eq 0) {
+              break
+            }
+            Write-Output 'Waiting for PostgreSQL to be ready...'
+            Start-Sleep 1
+          }
+          Write-Output 'PostgreSQL started'
+        }
+
+        WaitIsReady
+
+        Copy-Item -Path .\testdata\certs\root.crt -Destination "$PGDATA\root.crt"
+        Copy-Item -Path .\testdata\certs\server.crt -Destination "$PGDATA\server.crt"
+        Copy-Item -Path .\testdata\certs\server.key -Destination "$PGDATA\server.key"
+        dir
+        dir $PGDATA
+
+        @'
+        local     all         all                               trust
+        host      all         postgres    all                   trust
+        hostnossl all         pqgossltest all                   reject
+        hostnossl all         pqgosslcert all                   reject
+        hostssl   all         pqgossltest all                   trust
+        hostssl   all         pqgosslcert all                   cert
+        host      all         all         all                   trust
+        '@ | Out-File -FilePath "$PGDATA\pg_hba.conf"  -Encoding ASCII
+
+        psql -U postgres `
+          -c "ALTER SYSTEM SET ssl=on" `
+          -c "ALTER SYSTEM SET ssl_ca_file='root.crt'"
+
+        $service = Get-Service -Name postgresql*${{ inputs.version }}
+
+        Restart-Service $service
+        WaitIsReady
+
+        Add-Content -Path "$Env:SystemRoot\System32\drivers\etc\hosts" -Value '127.0.0.1 postgres' -Encoding ASCII
+
+    - name: create db/roles
+      shell: pwsh
+      run: |
+        $Env:Path = $Env:Path + ";" + (Get-ItemPropertyValue -Path ("Registry::" + (Get-ChildItem -Path 'HKLM:\SOFTWARE\PostgreSQL\Installations\postgresql-*-${{ inputs.version }}')[0].Name) -Name 'Base Directory') + "\bin"
+        createdb -U postgres pqgotest
+        createuser -U postgres -DRS pqgossltest
+        createuser -U postgres -DRS pqgosslcert

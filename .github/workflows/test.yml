@@ -16,9 +16,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: ['ubuntu-latest', 'macos-latest'] #, 'windows-latest']
-        postgres: ['17', '16', '15', '14']
-        go:       ['1.25', '1.18']
+        # runner: ['ubuntu-latest', 'macos-latest', 'windows-latest']
+        runner: ['windows-latest']
+        #postgres: ['17', '16', '15', '14']
+        postgres: ['16']
+        # go:       ['1.25', '1.18']
+        go:       ['1.25']
     steps:
     - name: check out code into the Go module directory
       uses: actions/checkout@v6
@@ -35,6 +38,12 @@ jobs:
       with:
         version: ${{ matrix.postgres }}
 
+    - name: run postgres - Windows
+      if: runner.os == 'Windows'
+      uses: ./.github/actions/run-postgres-windows
+      with:
+        version: ${{ matrix.postgres }}
+
     - name: set up go
       uses: actions/setup-go@v6
       with:
@@ -42,18 +51,31 @@ jobs:
       id: go
 
     - name: set key perms
+      if: runner.os != 'Windows'
       run: sudo chmod 600 testdata/certs/postgresql.key
 
-    - name: run tests
+    - name: run tests - PQTEST_BINARY_PARAMETERS=no
       env:
         PGUSER: postgres
         PGHOST: localhost
         PGPORT: 5432
         PQGOSSLTESTS: 1
         PQSSLCERTTEST_PATH: testdata/certs
+        PQTEST_BINARY_PARAMETERS: no
       run: |
-        PQTEST_BINARY_PARAMETERS=no go test -race ./...
-        PQTEST_BINARY_PARAMETERS=yes go test -race ./...
+        go test -race ./...
+        go test -race ./...
+
+    - name: run tests - PQTEST_BINARY_PARAMETERS=yes
+      env:
+        PGUSER: postgres
+        PGHOST: localhost
+        PGPORT: 5432
+        PQGOSSLTESTS: 1
+        PQSSLCERTTEST_PATH: testdata/certs
+        PQTEST_BINARY_PARAMETERS: yes 
+      run: |
+        go test -race ./...
 
     - name: build
       run: go build -v .
