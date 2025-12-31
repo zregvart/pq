@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: ['ubuntu-latest'] #, 'macos-latest', 'windows-latest']
+        runner: ['ubuntu-latest', 'macos-latest'] #, 'windows-latest']
         postgres: ['17', '16', '15', '14']
         go:       ['1.25', '1.18']
     steps:
@@ -26,6 +26,12 @@ jobs:
     - name: run postgres - Linux
       if: runner.os == 'Linux'
       uses: ./.github/actions/run-postgres-linux
+      with:
+        version: ${{ matrix.postgres }}
+
+    - name: run postgres - MacOS
+      if: runner.os == 'macOS'
+      uses: ./.github/actions/run-postgres-macos
       with:
         version: ${{ matrix.postgres }}
 
