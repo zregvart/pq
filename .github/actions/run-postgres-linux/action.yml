@@ -1,0 +1,85 @@
+---
+name: run-postgres-linux
+description: Run PostgreSQL on Linux
+inputs:
+  version:
+    description: Version to run
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: setup postgres pre-reqs - linux
+      shell: bash
+      run: |
+        mkdir init
+        cp testdata/certs/root.crt init/root.crt
+        cp testdata/certs/server.crt init/server.crt
+        cp testdata/certs/server.key init/server.key
+        cat <<CONF > init/hba.sh
+        cat <<EOF > /var/lib/postgresql/data/pg_hba.conf
+        local     all         all                               trust
+        host      all         postgres    all                   trust
+        hostnossl all         pqgossltest all                   reject
+        hostnossl all         pqgosslcert all                   reject
+        hostssl   all         pqgossltest all                   trust
+        hostssl   all         pqgosslcert all                   cert
+        host      all         all         all                   trust
+        EOF
+        CONF
+        sudo chown 999:999 ./init/*
+        sudo chmod 600 ./init/*
+
+    - name: start postgres
+      shell: bash
+      run: |
+        docker run -d \
+          --name pg \
+          -p 5432:5432 \
+          -v $(pwd)/init:/init \
+          -e POSTGRES_PASSWORD=unused \
+          -e POSTGRES_USER=postgres \
+          postgres:${{ inputs.version }} \
+            -c ssl=on \
+            -c ssl_ca_file=/init/root.crt \
+            -c ssl_cert_file=/init/server.crt \
+            -c ssl_key_file=/init/server.key
+
+    - name: configure postgres
+      shell: bash
+      run: |
+        n=0
+        until [ "$n" -ge 10 ]
+        do
+          docker exec pg pg_isready -h localhost && break
+          n=$((n+1))
+          echo waiting for postgres to be ready...
+          sleep 1
+        done
+        docker exec pg bash /init/hba.sh
+        n=0
+        until [ "$n" -ge 10 ]
+        do
+          docker exec pg su postgres -c '/usr/lib/postgresql/${{ inputs.version }}/bin/pg_ctl reload' && break
+          n=$((n+1))
+          echo waiting for postgres to reload...
+          sleep 1
+        done
+
+    - name: setup hosts
+      shell: bash
+      run: echo '127.0.0.1  postgres' | sudo tee -a /etc/hosts
+
+    - name: create db/roles
+      shell: bash
+      run: |
+        n=0
+        until [ "$n" -ge 10 ]
+        do
+          docker exec pg pg_isready -h localhost && break
+          n=$((n+1))
+          echo waiting for postgres to be ready...
+          sleep 1
+        done
+        docker exec pg createdb -h localhost -U postgres pqgotest
+        docker exec pg createuser -h localhost -U postgres -DRS pqgossltest
+        docker exec pg createuser -h localhost -U postgres -DRS pqgosslcert
